@@ -9,6 +9,8 @@ function App() {
   const [submitting, setSubmitting] = useState(false);
   const [lastResult, setLastResult] = useState(null);
 
+  // const [isLoggedIn, setIsLoggedIn] = useState(false);
+
   const [sourceIp, setSourceIp] = useState('8.8.8.8');
   const [destIp, setDestIp] = useState('192.168.1.99');
   const [scenario, setScenario] = useState('normal');
