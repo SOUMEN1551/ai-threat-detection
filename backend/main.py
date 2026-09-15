@@ -160,3 +160,8 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
 
     token = create_access_token(db_user.username)
     return {"access_token": token, "token_type": "bearer"}
+@app.delete("/alerts")
+def clear_alerts(db: Session = Depends(get_db)):
+    db.query(Alert).delete()
+    db.commit()
+    return {"message": "All alerts cleared"}

@@ -1,9 +1,15 @@
-﻿venv/
+﻿# Python
 backend/venv/
-frontend/node_modules/
-__pycache__/
+backend/__pycache__/
+backend/*.pkl
 *.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Data files (too large for GitHub)
+data/
+
+# Environment secrets
 .env
-*.csv
-*.pkl
-*.joblib
