@@ -1,3 +1,5 @@
+import os
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from institution_service import identify_institution
 from risk_service import calculate_risk_score
@@ -93,31 +95,17 @@ def get_alerts(db: Session = Depends(get_db)):
     alerts = db.query(Alert).all()
     return alerts
 
-import pandas as pd
-import numpy as np
-
 @app.get("/sample-scenarios")
 def get_sample_scenarios():
     """
-    Returns real feature rows from the dataset for testing:
+    Returns real feature rows for testing:
     one BENIGN example and one DDoS example.
     """
-    df = pd.read_csv("../data/cicids2017_sample_1M_natural.csv")
-
-    benign_row = df[df['Label'] == 'BENIGN'].iloc[0]
-    ddos_row = df[df['Label'] == 'DDoS'].iloc[0]
-
-    def clean_row(row):
-        features = row.drop('Label').to_dict()
-        return {
-            k: (0 if (v != v or v in [float('inf'), float('-inf')]) else v)
-            for k, v in features.items()
-        }
-
-    return {
-        "normal": clean_row(benign_row),
-        "attack": clean_row(ddos_row)
-    }
+    scenarios_file = os.path.join(os.path.dirname(__file__), "sample_scenarios.json")
+    if os.path.exists(scenarios_file):
+        with open(scenarios_file, "r") as f:
+            return json.load(f)
+    return {"normal": {}, "attack": {}}
 @app.get("/identify/{ip_address}")
 def identify_ip(ip_address: str):
     """

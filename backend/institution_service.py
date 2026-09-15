@@ -1,6 +1,7 @@
+import os
 import requests
 
-IPINFO_TOKEN = "b87b1926577e7f"  # replace with your real token
+IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "b87b1926577e7f")  # replace with your real token
 
 def identify_institution(ip_address: str) -> dict:
     """

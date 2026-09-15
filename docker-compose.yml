@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=mysql+pymysql://2uBnJ43Cwa2y3bP.root:UQ9dR4URKPYhsuJh@gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/test
+      - IPINFO_TOKEN=b87b1926577e7f
+      - SECRET_KEY=pbl-threat-detection-super-secret-key-2026
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend

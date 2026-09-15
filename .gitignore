@@ -1,7 +1,7 @@
-﻿# Python
+# Python
 backend/venv/
 backend/__pycache__/
-backend/*.pkl
+backend/threat_model.pkl
 *.pyc
 
 # Node

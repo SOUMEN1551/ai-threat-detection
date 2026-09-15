@@ -1,12 +1,15 @@
+import os
 import joblib
 import json
 import numpy as np
 import pandas as pd
 
-# Load the multi-class trained model
-model = joblib.load("threat_model_multiclass.pkl")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-with open("feature_names.json", "r") as f:
+# Load the multi-class trained model
+model = joblib.load(os.path.join(BASE_DIR, "threat_model_multiclass.pkl"))
+
+with open(os.path.join(BASE_DIR, "feature_names.json"), "r") as f:
     FEATURE_NAMES = json.load(f)
 
 def predict_threat(features: dict):

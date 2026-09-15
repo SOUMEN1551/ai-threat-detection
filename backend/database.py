@@ -1,9 +1,11 @@
+import os
+import datetime
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import datetime
 
-DATABASE_URL = "mysql+pymysql://2uBnJ43Cwa2y3bP.root:UQ9dR4URKPYhsuJh@gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/test"
+DEFAULT_DATABASE_URL = "mysql+pymysql://2uBnJ43Cwa2y3bP.root:UQ9dR4URKPYhsuJh@gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/test"
+DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { API_URL } from './api';
 
 function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -14,7 +15,7 @@ function Login({ onLoginSuccess }) {
     setMessage('');
 
     if (isRegistering) {
-      axios.post('http://127.0.0.1:8000/register', { username, password })
+      axios.post(`${API_URL}/register`, { username, password })
         .then(() => {
           setMessage('Registered successfully! You can now log in.');
           setIsRegistering(false);
@@ -25,7 +26,7 @@ function Login({ onLoginSuccess }) {
           setLoading(false);
         });
     } else {
-      axios.post('http://127.0.0.1:8000/login', { username, password })
+      axios.post(`${API_URL}/login`, { username, password })
         .then((response) => {
           onLoginSuccess(response.data.access_token, username);
           setLoading(false);

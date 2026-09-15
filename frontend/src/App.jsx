@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { API_URL } from './api';
 import Login from './Login';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadialBarChart, RadialBar, PolarAngleAxis } from 'recharts';
 
@@ -81,7 +82,7 @@ function App() {
 
   useEffect(() => {
     fetchAlerts();
-    axios.get('http://127.0.0.1:8000/sample-scenarios')
+    axios.get(`${API_URL}/sample-scenarios`)
       .then((response) => {
         setScenarios(response.data);
         setScenariosLoaded(true);
@@ -94,7 +95,7 @@ function App() {
 
   const fetchAlerts = () => {
     setLoading(true);
-    axios.get('http://127.0.0.1:8000/alerts')
+    axios.get(`${API_URL}/alerts`)
       .then((response) => {
         setAlerts(response.data);
         setLoading(false);
@@ -117,7 +118,7 @@ function App() {
       features: scenarios[scenario]
     };
 
-    axios.post('http://127.0.0.1:8000/events', payload)
+    axios.post(`${API_URL}/events`, payload)
       .then((response) => {
         setLastResult(response.data);
         setSubmitting(false);
@@ -134,7 +135,7 @@ function App() {
     setLookupLoading(true);
     setLookupResult(null);
 
-    axios.get(`http://127.0.0.1:8000/identify/${lookupIp}`)
+    axios.get(`${API_URL}/identify/${lookupIp}`)
       .then((response) => {
         setLookupResult(response.data);
         setLookupLoading(false);
@@ -230,7 +231,7 @@ function App() {
     if (!window.confirm('Are you sure you want to delete ALL alerts? This cannot be undone.')) {
       return;
     }
-    axios.delete('http://127.0.0.1:8000/alerts')
+    axios.delete(`${API_URL}/alerts`)
       .then(() => {
         fetchAlerts();
       })
