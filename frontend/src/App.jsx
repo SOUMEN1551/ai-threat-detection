@@ -47,6 +47,19 @@ const PALETTES = {
   }
 };
 
+const getCountryFlag = (countryCode) => {
+  if (!countryCode || countryCode === 'UNK' || countryCode === 'Unknown') return '🌐';
+  if (countryCode === 'LAN') return '🏠';
+  try {
+    return countryCode
+      .toUpperCase()
+      .slice(0, 2)
+      .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
+  } catch (e) {
+    return '🌐';
+  }
+};
+
 function App() {
   const [themeName, setThemeName] = useState(localStorage.getItem('theme') || 'dark');
   const COLORS = PALETTES[themeName];
@@ -65,7 +78,7 @@ function App() {
 
   const [sourceIp, setSourceIp] = useState('8.8.8.8');
   const [destIp, setDestIp] = useState('192.168.1.99');
-  const [scenario, setScenario] = useState('normal');
+  const [scenario, setScenario] = useState('attack');
   const [scenarios, setScenarios] = useState({ normal: {}, attack: {} });
   const [scenariosLoaded, setScenariosLoaded] = useState(false);
 
@@ -80,6 +93,15 @@ function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [username, setUsername] = useState(localStorage.getItem('username'));
 
+  // Next-Level Feature States: SOAR, Live Stream, Model Metrics
+  const [socStreaming, setSocStreaming] = useState(false);
+  const [streamCount, setStreamCount] = useState(0);
+  const [mitigatingId, setMitigatingId] = useState(null);
+  const [activeMitigationAlert, setActiveMitigationAlert] = useState(null);
+  const [showMetricsModal, setShowMetricsModal] = useState(false);
+  const [modelMetrics, setModelMetrics] = useState(null);
+  const [copiedRule, setCopiedRule] = useState(null);
+
   useEffect(() => {
     fetchAlerts();
     axios.get(`${API_URL}/sample-scenarios`)
@@ -92,6 +114,43 @@ function App() {
     const interval = setInterval(() => fetchAlerts(), 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Real-Time SOC Traffic Streamer Effect
+  useEffect(() => {
+    if (!socStreaming || !scenariosLoaded) return;
+
+    const streamIps = [
+      { ip: '185.220.101.5', pattern: 'attack' },
+      { ip: '8.8.8.8', pattern: 'normal' },
+      { ip: '45.33.32.156', pattern: 'attack' },
+      { ip: '1.1.1.1', pattern: 'normal' },
+      { ip: '103.251.167.20', pattern: 'attack' },
+      { ip: '192.168.1.105', pattern: 'normal' },
+      { ip: '194.26.29.112', pattern: 'attack' },
+      { ip: '172.217.16.206', pattern: 'normal' }
+    ];
+
+    const streamTimer = setInterval(() => {
+      const choice = streamIps[Math.floor(Math.random() * streamIps.length)];
+      const payload = {
+        source_ip: choice.ip,
+        dest_ip: '192.168.1.99',
+        event_type: 'live_soc_stream',
+        features: scenarios[choice.pattern] || {}
+      };
+
+      axios.post(`${API_URL}/events`, payload)
+        .then((res) => {
+          setStreamCount((c) => c + 1);
+          if (res.data.alert_created) {
+            fetchAlerts();
+          }
+        })
+        .catch(() => {});
+    }, 4200);
+
+    return () => clearInterval(streamTimer);
+  }, [socStreaming, scenariosLoaded, scenarios]);
 
   const fetchAlerts = () => {
     setLoading(true);
@@ -115,7 +174,7 @@ function App() {
       source_ip: sourceIp,
       dest_ip: destIp,
       event_type: 'manual_submission',
-      features: scenarios[scenario]
+      features: scenarios[scenario] || {}
     };
 
     axios.post(`${API_URL}/events`, payload)
@@ -144,6 +203,36 @@ function App() {
         setLookupResult({ error: 'Lookup failed.' });
         setLookupLoading(false);
       });
+  };
+
+  const handleMitigate = (e, alert) => {
+    e.stopPropagation();
+    setMitigatingId(alert.id);
+    axios.patch(`${API_URL}/alerts/${alert.id}/status`, { status: 'mitigated' })
+      .then(() => {
+        setAlerts((prev) => prev.map((a) => (a.id === alert.id ? { ...a, status: 'mitigated' } : a)));
+        setActiveMitigationAlert({ ...alert, status: 'mitigated' });
+        setMitigatingId(null);
+      })
+      .catch(() => {
+        setMitigatingId(null);
+        window.alert('Failed to update mitigation status.');
+      });
+  };
+
+  const copyRule = (text, key) => {
+    navigator.clipboard.writeText(text);
+    setCopiedRule(key);
+    setTimeout(() => setCopiedRule(null), 2200);
+  };
+
+  const openMetricsModal = () => {
+    setShowMetricsModal(true);
+    if (!modelMetrics) {
+      axios.get(`${API_URL}/model-metrics`)
+        .then((res) => setModelMetrics(res.data))
+        .catch(() => {});
+    }
   };
 
   const handleLoginSuccess = (newToken, newUsername) => {
@@ -195,26 +284,30 @@ function App() {
     const total = alerts.length;
     const critical = alerts.filter(a => a.risk_level === 'Critical').length;
     const high = alerts.filter(a => a.risk_level === 'High').length;
-    const uniqueThreats = new Set(alerts.map(a => a.threat_type)).size;
-    return { total, critical, high, uniqueThreats };
+    const mitigated = alerts.filter(a => a.status === 'mitigated').length;
+    return { total, critical, high, mitigated };
   };
 
   const getFilteredAlerts = () => {
     return alerts.filter((alert) => {
       const matchesLevel = filterLevel === 'All' || alert.risk_level === filterLevel;
       const matchesSearch = searchTerm === '' ||
-        alert.threat_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        alert.institution.toLowerCase().includes(searchTerm.toLowerCase());
+        alert.threat_type?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        alert.institution?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        alert.country?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        alert.city?.toLowerCase().includes(searchTerm.toLowerCase());
       return matchesLevel && matchesSearch;
     });
   };
-    const toggleExpand = (id) => {
+
+  const toggleExpand = (id) => {
     setExpandedId(expandedId === id ? null : id);
   };
-    const exportToCSV = () => {
-    const headers = ['Event ID', 'Threat Type', 'Risk Score', 'Risk Level', 'Institution', 'Status', 'Created'];
+
+  const exportToCSV = () => {
+    const headers = ['Event ID', 'Threat Type', 'Risk Score', 'Risk Level', 'Country', 'City', 'Institution', 'Status', 'Created'];
     const rows = getFilteredAlerts().map(a => [
-      a.event_id, a.threat_type, a.risk_score, a.risk_level, a.institution, a.status, a.created_at
+      a.event_id, a.threat_type, a.risk_score, a.risk_level, a.country || 'Unknown', a.city || 'Unknown', a.institution, a.status, a.created_at
     ]);
     const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
 
@@ -236,10 +329,9 @@ function App() {
         fetchAlerts();
       })
       .catch(() => {
-        alert('Failed to clear alerts.');
+        window.alert('Failed to clear alerts.');
       });
   };
-
 
   if (!token) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
@@ -286,11 +378,12 @@ function App() {
     border: `1px solid ${COLORS.cardBorder}`
   };
 
+  const stats = getStats();
   const statCards = [
-    { label: 'Total Alerts', value: getStats().total, color: COLORS.accent, icon: '📊' },
-    { label: 'Critical', value: getStats().critical, color: COLORS.critical, icon: '🔴' },
-    { label: 'High', value: getStats().high, color: COLORS.high, icon: '🟠' },
-    { label: 'Threat Types Seen', value: getStats().uniqueThreats, color: COLORS.accent2, icon: '🧬' },
+    { label: 'Total Threats', value: stats.total, color: COLORS.accent, icon: '📊' },
+    { label: 'Critical Alerts', value: stats.critical, color: COLORS.critical, icon: '🔴' },
+    { label: 'High Priority', value: stats.high, color: COLORS.high, icon: '🟠' },
+    { label: 'Mitigated (SOAR)', value: stats.mitigated, color: COLORS.low, icon: '🛡️' },
   ];
 
   return (
@@ -316,8 +409,8 @@ function App() {
         .stat-card { transition: transform 0.15s ease, border-color 0.15s ease; }
         .stat-card:hover { transform: translateY(-3px); border-color: ${COLORS.accent}; }
         .app-row:hover { background-color: ${COLORS.pill} !important; }
-        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
-        .live-dot { animation: pulse 1.6s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+        .live-dot { animation: pulse 1.4s infinite; }
         .theme-toggle { transition: background-color 0.2s ease; cursor: pointer; }
       `}</style>
 
@@ -326,7 +419,7 @@ function App() {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '20px 32px', borderBottom: `1px solid ${COLORS.cardBorder}`,
         background: COLORS.headerGrad,
-        marginBottom: '28px', flexWrap: 'wrap', gap: '12px'
+        marginBottom: '28px', flexWrap: 'wrap', gap: '14px'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
@@ -336,14 +429,41 @@ function App() {
             boxShadow: '0 4px 14px rgba(91,141,255,0.4)'
           }}>🛡️</div>
           <div>
-            <div style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '0.3px' }}>Threat Detection Dashboard</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, letterSpacing: '0.3px' }}>AI Threat Detection & Defense SOC</div>
             <div style={{ fontSize: '12px', color: COLORS.low, display: 'flex', alignItems: 'center', gap: '5px' }}>
               <span className="live-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: COLORS.low, display: 'inline-block' }}></span>
-              Live monitoring
+              Live Enterprise Telemetry Engine
             </div>
           </div>
         </div>
-        <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+
+        {/* Action Controls in Header */}
+        <div style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          
+          {/* Real-Time SOC Streamer Toggle */}
+          <button
+            onClick={() => setSocStreaming(!socStreaming)}
+            className="app-btn"
+            style={{
+              ...secondaryButtonStyle,
+              borderColor: socStreaming ? COLORS.critical : COLORS.cardBorder,
+              color: socStreaming ? '#fff' : COLORS.text,
+              backgroundColor: socStreaming ? 'rgba(255,77,94,0.18)' : COLORS.pill,
+              display: 'flex', alignItems: 'center', gap: '7px', padding: '8px 14px'
+            }}
+          >
+            <span className={socStreaming ? 'live-dot' : ''} style={{
+              width: '8px', height: '8px', borderRadius: '50%',
+              backgroundColor: socStreaming ? COLORS.critical : COLORS.textMuted
+            }}></span>
+            {socStreaming ? `Live SOC Stream Active (${streamCount})` : 'Start Live SOC Stream'}
+          </button>
+
+          {/* Model Benchmarks Modal Trigger */}
+          <button onClick={openMetricsModal} className="app-btn" style={{ ...secondaryButtonStyle, padding: '8px 14px' }}>
+            📊 Model Analytics
+          </button>
+
           <div
             onClick={toggleTheme}
             className="theme-toggle"
@@ -357,6 +477,7 @@ function App() {
             <span>{themeName === 'dark' ? '🌙' : '☀️'}</span>
             <span>{themeName === 'dark' ? 'Dark' : 'Light'}</span>
           </div>
+
           <div style={{
             display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px',
             backgroundColor: COLORS.pill, borderRadius: '20px', border: `1px solid ${COLORS.cardBorder}`
@@ -369,18 +490,40 @@ function App() {
             }}>{username?.[0]?.toUpperCase()}</span>
             <strong>{username}</strong>
           </div>
-          <button onClick={handleLogout} className="app-btn" style={secondaryButtonStyle}>
+          <button onClick={handleLogout} className="app-btn" style={{ ...secondaryButtonStyle, padding: '7px 14px' }}>
             Logout
           </button>
         </div>
       </div>
 
-      <div style={{ maxWidth: '980px', margin: '0 auto', padding: '0 20px' }}>
+      <div style={{ maxWidth: '1080px', margin: '0 auto', padding: '0 20px' }}>
+
+        {/* Live SOC Streamer Info Bar */}
+        {socStreaming && (
+          <div style={{
+            padding: '12px 18px', backgroundColor: 'rgba(255, 77, 94, 0.12)',
+            border: `1px solid ${COLORS.critical}`, borderRadius: '10px', marginBottom: '20px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span className="live-dot" style={{ fontSize: '18px' }}>📡</span>
+              <div>
+                <strong>Autonomous SOC Traffic Stream Active</strong>
+                <div style={{ fontSize: '12px', color: COLORS.textMuted }}>
+                  Streaming simulated synthetic packet telemetry every 4.2 seconds into the AI classifier.
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: COLORS.critical }}>
+              Packets Processed: {streamCount}
+            </div>
+          </div>
+        )}
 
         {/* Event submission */}
         <div style={{ ...cardStyle, borderLeft: `4px solid ${COLORS.accent}` }}>
           <h3 style={{ marginTop: 0, marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            🧪 Submit a Test Event
+            🧪 Telemetry Analyzer & AI Inference Engine
           </h3>
           <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
             <div>
@@ -394,34 +537,121 @@ function App() {
             <div>
               <label style={{ display: 'block', fontSize: '12px', color: COLORS.textMuted, marginBottom: '6px' }}>Traffic Pattern</label>
               <select className="app-select" value={scenario} onChange={(e) => setScenario(e.target.value)} style={inputStyle}>
-                <option value="normal">Normal Traffic</option>
-                <option value="attack">Suspicious / Attack-like Traffic</option>
+                <option value="attack">DDoS / DoS Attack Pattern</option>
+                <option value="normal">Normal / Benign Baseline</option>
               </select>
             </div>
             <button type="submit" disabled={submitting || !scenariosLoaded} className="app-btn" style={buttonStyle}>
-              {submitting ? 'Analyzing...' : (scenariosLoaded ? 'Submit Event' : 'Loading...')}
+              {submitting ? 'Running Inference...' : (scenariosLoaded ? 'Analyze Packet Flow' : 'Loading Model...')}
             </button>
           </form>
 
+          {/* Inference Result & Explainable AI Breakdown */}
           {lastResult && !lastResult.error && (
             <div style={{
-              marginTop: '20px', padding: '16px', backgroundColor: COLORS.cardAlt, borderRadius: '10px',
-              display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap',
+              marginTop: '22px', padding: '20px', backgroundColor: COLORS.cardAlt, borderRadius: '12px',
               border: `1px solid ${COLORS.cardBorder}`
             }}>
-              <RiskGauge score={lastResult.risk_score} level={lastResult.risk_level} />
-              <div style={{ fontSize: '14px', lineHeight: 2 }}>
-                <div><span style={{ color: COLORS.textMuted }}>Threat Type:</span> <strong>{lastResult.threat_type}</strong></div>
-                <div><span style={{ color: COLORS.textMuted }}>Risk Level:</span>{' '}
-                  <span style={{
-                    color: '#fff', backgroundColor: getRiskColor(lastResult.risk_level),
-                    padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 700
-                  }}>{lastResult.risk_level}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                <RiskGauge score={lastResult.risk_score} level={lastResult.risk_level} />
+                <div style={{ fontSize: '14px', lineHeight: 2, flex: 1, minWidth: '240px' }}>
+                  <div>
+                    <span style={{ color: COLORS.textMuted }}>Threat Type:</span>{' '}
+                    <strong style={{ fontSize: '16px', color: COLORS.text }}>{lastResult.threat_type}</strong>
+                    <span style={{ marginLeft: '10px', fontSize: '12px', color: COLORS.textMuted }}>
+                      (Confidence: {(lastResult.confidence * 100).toFixed(1)}%)
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ color: COLORS.textMuted }}>Risk Assessment:</span>{' '}
+                    <span style={{
+                      color: '#fff', backgroundColor: getRiskColor(lastResult.risk_level),
+                      padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 700
+                    }}>{lastResult.risk_level}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: COLORS.textMuted }}>Origin Organization:</span>{' '}
+                    <strong>{getCountryFlag(lastResult.country_code)} {lastResult.institution}</strong>
+                    {lastResult.city !== 'Unknown' && <span style={{ color: COLORS.textMuted, fontSize: '12px', marginLeft: '6px' }}>({lastResult.city}, {lastResult.country})</span>}
+                  </div>
                 </div>
-                <div><span style={{ color: COLORS.textMuted }}>Institution:</span> <strong>{lastResult.institution}</strong></div>
+
+                {/* Quick SOAR Action Button */}
+                {lastResult.firewall_rules && lastResult.risk_score >= 60 && (
+                  <div>
+                    <button
+                      onClick={() => setActiveMitigationAlert({
+                        id: lastResult.alert_id || 'Instant',
+                        threat_type: lastResult.threat_type,
+                        risk_score: lastResult.risk_score,
+                        risk_level: lastResult.risk_level,
+                        institution: lastResult.institution,
+                        country: lastResult.country,
+                        city: lastResult.city,
+                        firewall_rule: lastResult.firewall_rules.iptables,
+                        powershell_rule: lastResult.firewall_rules.powershell,
+                        cisco_acl: lastResult.firewall_rules.cisco_acl
+                      })}
+                      className="app-btn"
+                      style={{
+                        ...buttonStyle,
+                        backgroundColor: COLORS.critical,
+                        backgroundImage: 'none',
+                        boxShadow: '0 4px 14px rgba(255,77,94,0.4)',
+                        fontSize: '13px'
+                      }}
+                    >
+                      🛡️ Generate Firewall Mitigation
+                    </button>
+                  </div>
+                )}
               </div>
+
+              {/* Explainable AI (XAI) Section */}
+              {lastResult.explanation && (
+                <div style={{
+                  padding: '16px', backgroundColor: COLORS.pill, borderRadius: '10px',
+                  border: `1px solid ${COLORS.cardBorder}`, marginTop: '14px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '18px' }}>🧠</span>
+                    <strong style={{ fontSize: '14px', color: COLORS.accent }}>Explainable AI (XAI) Decision Rationale</strong>
+                  </div>
+                  <p style={{ margin: '0 0 14px 0', fontSize: '13px', lineHeight: 1.6, color: COLORS.text }}>
+                    {lastResult.explanation.summary}
+                  </p>
+
+                  {lastResult.explanation.top_factors?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: COLORS.textMuted, marginBottom: '8px', textTransform: 'uppercase' }}>
+                        Top Contributing Anomaly Factors:
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
+                        {lastResult.explanation.top_factors.map((factor, idx) => (
+                          <div key={idx} style={{
+                            padding: '10px 12px', backgroundColor: COLORS.card, borderRadius: '8px',
+                            border: `1px solid ${COLORS.cardBorder}`, fontSize: '12px'
+                          }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <strong style={{ color: COLORS.text }}>{factor.feature}</strong>
+                              <span style={{
+                                fontSize: '11px', padding: '1px 6px', borderRadius: '4px',
+                                backgroundColor: factor.impact === 'High' ? 'rgba(255,77,94,0.2)' : 'rgba(91,141,255,0.2)',
+                                color: factor.impact === 'High' ? COLORS.critical : COLORS.accent, fontWeight: 700
+                              }}>{factor.impact} Impact</span>
+                            </div>
+                            <div style={{ color: COLORS.textMuted, marginBottom: '6px' }}>Value: <span style={{ color: COLORS.text, fontWeight: 600 }}>{factor.value}</span></div>
+                            <div style={{ color: COLORS.textMuted, fontSize: '11px', lineHeight: 1.4 }}>{factor.description}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
+
           {lastResult && lastResult.error && (
             <p style={{ color: COLORS.critical, marginTop: '15px' }}>{lastResult.error}</p>
           )}
@@ -430,15 +660,15 @@ function App() {
         {/* Institution lookup */}
         <div style={{ ...cardStyle, borderLeft: `4px solid ${COLORS.accent2}` }}>
           <h3 style={{ marginTop: 0, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            🏢 Institution Identification Lookup
+            🏢 Geo-IP & Threat Origin Intelligence Lookup
           </h3>
           <p style={{ color: COLORS.textMuted, fontSize: '13px', marginTop: 0, marginBottom: '16px' }}>
-            Check which organization an IP address belongs to, independent of event analysis.
+            Inspect ASN organization and geographic geolocation for any host address.
           </p>
           <form onSubmit={handleLookup} style={{ display: 'flex', gap: '10px' }}>
             <input
               className="app-input" type="text" value={lookupIp} onChange={(e) => setLookupIp(e.target.value)}
-              placeholder="Enter IP address" style={{ ...inputStyle, flex: 1 }}
+              placeholder="Enter IP address (e.g. 1.1.1.1 or 8.8.8.8)" style={{ ...inputStyle, flex: 1 }}
             />
             <button type="submit" disabled={lookupLoading} className="app-btn" style={buttonStyle}>
               {lookupLoading ? 'Looking up...' : 'Lookup'}
@@ -450,11 +680,10 @@ function App() {
               marginTop: '15px', padding: '14px', backgroundColor: COLORS.cardAlt, borderRadius: '10px',
               fontSize: '14px', lineHeight: 2, border: `1px solid ${COLORS.cardBorder}`
             }}>
-              <div><span style={{ color: COLORS.textMuted }}>IP Address:</span> <strong>{lookupResult.ip_address}</strong></div>
-              <div><span style={{ color: COLORS.textMuted }}>Institution:</span> <strong>{lookupResult.institution}</strong></div>
+              <div><span style={{ color: COLORS.textMuted }}>Host IP:</span> <strong>{lookupResult.ip_address}</strong></div>
+              <div><span style={{ color: COLORS.textMuted }}>Origin Organization:</span> <strong>{lookupResult.institution}</strong></div>
               <div>
                 <span style={{ color: COLORS.textMuted }}>Confidence:</span> <strong>{(lookupResult.confidence * 100).toFixed(0)}%</strong>
-                <span style={{ color: COLORS.textMuted, fontSize: '12px', marginLeft: '8px', opacity: 0.7 }}>(best-effort, not a confirmed match)</span>
               </div>
             </div>
           )}
@@ -479,10 +708,10 @@ function App() {
           </div>
         )}
 
-        {/* Chart */}
+        {/* Threat Distribution Chart */}
         {!loading && !error && alerts.length > 0 && (
           <div style={cardStyle}>
-            <h3 style={{ marginTop: 0, marginBottom: '15px' }}>📈 Threat Type Distribution</h3>
+            <h3 style={{ marginTop: 0, marginBottom: '15px' }}>📈 Threat Type Distribution (Live Classified)</h3>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={getChartData()}>
                 <defs>
@@ -501,12 +730,13 @@ function App() {
           </div>
         )}
 
+        {/* Action button bar */}
         <div style={{ textAlign: 'center', marginBottom: '18px', display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button onClick={fetchAlerts} className="app-btn" style={secondaryButtonStyle}>
-            🔄 Refresh Alerts
+            🔄 Refresh Feed
           </button>
           <button onClick={exportToCSV} disabled={alerts.length === 0} className="app-btn" style={secondaryButtonStyle}>
-            ⬇️ Export CSV
+            ⬇️ Export Forensic CSV
           </button>
           <button
             onClick={clearAllAlerts}
@@ -518,15 +748,16 @@ function App() {
           </button>
         </div>
 
-        {loading && <p style={{ textAlign: 'center', color: COLORS.textMuted }}>Loading alerts...</p>}
+        {loading && <p style={{ textAlign: 'center', color: COLORS.textMuted }}>Loading threat telemetry...</p>}
         {error && <p style={{ color: COLORS.critical, textAlign: 'center' }}>{error}</p>}
-        {!loading && !error && alerts.length === 0 && <p style={{ textAlign: 'center', color: COLORS.textMuted }}>No alerts yet.</p>}
+        {!loading && !error && alerts.length === 0 && <p style={{ textAlign: 'center', color: COLORS.textMuted }}>No security alerts recorded.</p>}
 
+        {/* Alerts Table with SOAR Mitigation Actions */}
         {!loading && !error && alerts.length > 0 && (
           <>
             <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
               <input
-                className="app-input" type="text" placeholder="🔍 Search threat type or institution..."
+                className="app-input" type="text" placeholder="🔍 Search threat, country, city, or institution..."
                 value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                 style={{ ...inputStyle, flex: 1, minWidth: '220px' }}
               />
@@ -538,7 +769,7 @@ function App() {
                 <option value="Low">Low</option>
               </select>
               <span style={{ color: COLORS.textMuted, fontSize: '13px' }}>
-                Showing {getFilteredAlerts().length} of {alerts.length}
+                Showing {getFilteredAlerts().length} of {alerts.length} incidents
               </span>
             </div>
 
@@ -546,12 +777,12 @@ function App() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                 <thead>
                   <tr style={{ background: COLORS.theadGrad, textAlign: 'left' }}>
-                    {['Event ID', 'Threat Type', 'Risk Score', 'Risk Level', 'Institution', 'Status', 'Created'].map((h) => (
+                    {['Event ID', 'Threat Type', 'Risk', 'Level', 'Origin / Geo-IP', 'Status', 'SOAR Mitigation'].map((h) => (
                       <th key={h} style={{ padding: '13px 16px', color: COLORS.textMuted, fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
-                               <tbody>
+                <tbody>
                   {getFilteredAlerts().map((alert) => (
                     <>
                       <tr
@@ -576,47 +807,147 @@ function App() {
                             {alert.risk_level}
                           </span>
                         </td>
-                        <td style={{ padding: '13px 16px', color: COLORS.textMuted }}>{alert.institution}</td>
-                        <td style={{ padding: '13px 16px' }}>
-                          <span style={{ color: COLORS.low, fontWeight: 600, fontSize: '13px' }}>● {alert.status}</span>
+                        <td style={{ padding: '13px 16px', color: COLORS.textMuted }}>
+                          <span style={{ marginRight: '6px', fontSize: '16px' }}>{getCountryFlag(alert.country)}</span>
+                          {alert.city && alert.city !== 'Unknown' && <span>{alert.city}, </span>}
+                          {alert.country && alert.country !== 'Unknown' && <span>{alert.country} · </span>}
+                          <strong>{alert.institution}</strong>
                         </td>
-                        <td style={{ padding: '13px 16px', color: COLORS.textMuted, fontSize: '13px' }}>
-                          {new Date(alert.created_at).toLocaleString()}
+                        <td style={{ padding: '13px 16px' }}>
+                          <span style={{
+                            color: alert.status === 'mitigated' ? COLORS.low : COLORS.high,
+                            fontWeight: 700, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px'
+                          }}>
+                            <span>{alert.status === 'mitigated' ? '✅' : '🔴'}</span>
+                            {alert.status === 'mitigated' ? 'Mitigated' : 'Active Threat'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '13px 16px' }}>
+                          {alert.status !== 'mitigated' ? (
+                            <button
+                              onClick={(e) => handleMitigate(e, alert)}
+                              disabled={mitigatingId === alert.id}
+                              className="app-btn"
+                              style={{
+                                padding: '5px 12px', fontSize: '12px', fontWeight: 700,
+                                borderRadius: '6px', border: 'none', cursor: 'pointer',
+                                backgroundColor: COLORS.critical, color: '#fff'
+                              }}
+                            >
+                              {mitigatingId === alert.id ? 'Applying...' : '🛡️ Mitigate'}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMitigationAlert(alert);
+                              }}
+                              className="app-btn"
+                              style={{
+                                padding: '5px 12px', fontSize: '12px', fontWeight: 700,
+                                borderRadius: '6px', border: `1px solid ${COLORS.cardBorder}`, cursor: 'pointer',
+                                backgroundColor: COLORS.pill, color: COLORS.low
+                              }}
+                            >
+                              📋 View Rule
+                            </button>
+                          )}
                         </td>
                       </tr>
                       {expandedId === alert.id && (
                         <tr style={{ backgroundColor: COLORS.cardAlt }}>
                           <td colSpan={7} style={{ padding: '20px 30px', borderTop: `1px solid ${COLORS.cardBorder}` }}>
-                            <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap', fontSize: '13px' }}>
+                            <div style={{ display: 'flex', gap: '30px', flexWrap: 'wrap', fontSize: '13px', marginBottom: '16px' }}>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Alert ID</div>
-                                <strong>{alert.id}</strong>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Incident Alert ID</div>
+                                <strong>#{alert.id}</strong>
                               </div>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Related Event ID</div>
-                                <strong>{alert.event_id}</strong>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Associated Flow Event</div>
+                                <strong>#{alert.event_id}</strong>
                               </div>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Threat Type</div>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Threat Classification</div>
                                 <strong>{alert.threat_type}</strong>
                               </div>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Risk Score</div>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Risk Evaluation</div>
                                 <strong style={{ color: getRiskColor(alert.risk_level) }}>{alert.risk_score} / 100</strong>
                               </div>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Institution</div>
-                                <strong>{alert.institution}</strong>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Geolocation Origin</div>
+                                <strong>{getCountryFlag(alert.country)} {alert.city}, {alert.country}</strong>
                               </div>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Full Timestamp</div>
-                                <strong>{new Date(alert.created_at).toString()}</strong>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Detection Timestamp</div>
+                                <strong>{new Date(alert.created_at).toLocaleString()}</strong>
                               </div>
                               <div>
-                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Status</div>
-                                <strong>{alert.status}</strong>
+                                <div style={{ color: COLORS.textMuted, marginBottom: '4px' }}>Defense Status</div>
+                                <strong style={{ color: alert.status === 'mitigated' ? COLORS.low : COLORS.critical }}>
+                                  {alert.status.toUpperCase()}
+                                </strong>
                               </div>
                             </div>
+
+                            {/* Explainable AI breakdown inside expanded row */}
+                            {(() => {
+                              let exp = null;
+                              try {
+                                exp = typeof alert.explanation === 'string' ? JSON.parse(alert.explanation) : alert.explanation;
+                              } catch (e) {
+                                exp = null;
+                              }
+                              return exp && (
+                                <div style={{
+                                  padding: '12px 16px', backgroundColor: COLORS.pill, borderRadius: '8px',
+                                  border: `1px solid ${COLORS.cardBorder}`, marginTop: '10px'
+                                }}>
+                                  <div style={{ fontWeight: 700, color: COLORS.accent, fontSize: '13px', marginBottom: '4px' }}>
+                                    🧠 AI Decision Explanation:
+                                  </div>
+                                  <div style={{ fontSize: '13px', color: COLORS.text, marginBottom: '8px' }}>
+                                    {exp.summary}
+                                  </div>
+                                  {exp.top_factors && (
+                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                      {exp.top_factors.map((f, i) => (
+                                        <div key={i} style={{
+                                          padding: '6px 10px', borderRadius: '6px', backgroundColor: COLORS.card,
+                                          fontSize: '11px', border: `1px solid ${COLORS.cardBorder}`
+                                        }}>
+                                          <strong style={{ color: COLORS.text }}>{f.feature}</strong>: {f.value}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            {/* Firewall Rule */}
+                            {alert.firewall_rule && (
+                              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ fontSize: '12px', color: COLORS.textMuted }}>Recommended Linux Rule:</div>
+                                <code style={{
+                                  padding: '4px 8px', backgroundColor: COLORS.pill, borderRadius: '5px',
+                                  fontSize: '12px', color: COLORS.accent
+                                }}>{alert.firewall_rule}</code>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyRule(alert.firewall_rule, `alert-${alert.id}`);
+                                  }}
+                                  style={{
+                                    padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
+                                    borderRadius: '5px', border: `1px solid ${COLORS.cardBorder}`,
+                                    backgroundColor: COLORS.card, color: COLORS.text
+                                  }}
+                                >
+                                  {copiedRule === `alert-${alert.id}` ? '✓ Copied' : 'Copy'}
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )}
@@ -628,6 +959,246 @@ function App() {
           </>
         )}
       </div>
+
+      {/* SOAR Automated Firewall Mitigation Modal */}
+      {activeMitigationAlert && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: '20px'
+        }}>
+          <div style={{
+            ...cardStyle, maxWidth: '620px', width: '100%', margin: 0,
+            border: `1px solid ${COLORS.accent}`, boxShadow: '0 8px 32px rgba(0,0,0,0.6)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '24px' }}>🛡️</span>
+                <h3 style={{ margin: 0, fontSize: '18px' }}>Automated SOAR Firewall Mitigation</h3>
+              </div>
+              <button
+                onClick={() => setActiveMitigationAlert(null)}
+                style={{ background: 'none', border: 'none', color: COLORS.textMuted, fontSize: '20px', cursor: 'pointer' }}
+              >✕</button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: COLORS.textMuted, lineHeight: 1.5, marginTop: 0 }}>
+              The AI classifier flagged malicious network flow from <strong>{activeMitigationAlert.institution}</strong>.
+              Execute any of the following firewall rules on your boundary gateway to isolate the attacker:
+            </p>
+
+            {/* Linux iptables */}
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+                <strong>🐧 Linux Gateway (iptables)</strong>
+                <span
+                  onClick={() => copyRule(activeMitigationAlert.firewall_rule || `sudo iptables -A INPUT -s ${activeMitigationAlert.institution} -j DROP`, 'modal-iptables')}
+                  style={{ color: COLORS.accent, cursor: 'pointer', fontWeight: 700 }}
+                >
+                  {copiedRule === 'modal-iptables' ? '✓ Copied!' : 'Copy Rule'}
+                </span>
+              </div>
+              <pre style={{
+                margin: 0, padding: '10px 14px', backgroundColor: COLORS.cardAlt,
+                borderRadius: '8px', border: `1px solid ${COLORS.cardBorder}`, color: COLORS.accent,
+                fontSize: '12px', overflowX: 'auto'
+              }}>
+                {activeMitigationAlert.firewall_rule || `sudo iptables -A INPUT -s ${activeMitigationAlert.institution} -j DROP`}
+              </pre>
+            </div>
+
+            {/* Windows Firewall */}
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+                <strong>🪟 Windows Defender (PowerShell Administrator)</strong>
+                <span
+                  onClick={() => copyRule(`New-NetFirewallRule -DisplayName "Block-Threat-${activeMitigationAlert.id}" -Direction Inbound -Action Block`, 'modal-ps')}
+                  style={{ color: COLORS.accent, cursor: 'pointer', fontWeight: 700 }}
+                >
+                  {copiedRule === 'modal-ps' ? '✓ Copied!' : 'Copy Rule'}
+                </span>
+              </div>
+              <pre style={{
+                margin: 0, padding: '10px 14px', backgroundColor: COLORS.cardAlt,
+                borderRadius: '8px', border: `1px solid ${COLORS.cardBorder}`, color: COLORS.high,
+                fontSize: '12px', overflowX: 'auto'
+              }}>
+                {`New-NetFirewallRule -DisplayName "Block-Threat-${activeMitigationAlert.id}" -Direction Inbound -Action Block`}
+              </pre>
+            </div>
+
+            {/* Cisco Router ACL */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+                <strong>🌐 Cisco IOS Router (ACL)</strong>
+                <span
+                  onClick={() => copyRule(`access-list 101 deny ip host ${activeMitigationAlert.institution} any`, 'modal-cisco')}
+                  style={{ color: COLORS.accent, cursor: 'pointer', fontWeight: 700 }}
+                >
+                  {copiedRule === 'modal-cisco' ? '✓ Copied!' : 'Copy Rule'}
+                </span>
+              </div>
+              <pre style={{
+                margin: 0, padding: '10px 14px', backgroundColor: COLORS.cardAlt,
+                borderRadius: '8px', border: `1px solid ${COLORS.cardBorder}`, color: COLORS.low,
+                fontSize: '12px', overflowX: 'auto'
+              }}>
+                {`access-list 101 deny ip host ${activeMitigationAlert.institution} any`}
+              </pre>
+            </div>
+
+            <button
+              onClick={() => setActiveMitigationAlert(null)}
+              className="app-btn"
+              style={{ ...buttonStyle, width: '100%', padding: '10px' }}
+            >
+              Close Mitigation Dialog
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Model Analytics & Benchmark Modal */}
+      {showMetricsModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1000, padding: '20px'
+        }}>
+          <div style={{
+            ...cardStyle, maxWidth: '780px', width: '100%', margin: 0, maxHeight: '90vh', overflowY: 'auto',
+            border: `1px solid ${COLORS.accent2}`, boxShadow: '0 8px 32px rgba(0,0,0,0.6)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '24px' }}>📊</span>
+                <h3 style={{ margin: 0, fontSize: '18px' }}>AI Model Benchmarks & Scientific Evaluation</h3>
+              </div>
+              <button
+                onClick={() => setShowMetricsModal(false)}
+                style={{ background: 'none', border: 'none', color: COLORS.textMuted, fontSize: '20px', cursor: 'pointer' }}
+              >✕</button>
+            </div>
+
+            {modelMetrics ? (
+              <>
+                {/* Active Model Scorecards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                  <div style={{ padding: '12px', backgroundColor: COLORS.cardAlt, borderRadius: '8px', textAlign: 'center', border: `1px solid ${COLORS.cardBorder}` }}>
+                    <div style={{ color: COLORS.textMuted, fontSize: '11px' }}>ACCURACY</div>
+                    <div style={{ fontSize: '22px', fontWeight: 800, color: COLORS.accent }}>
+                      {(modelMetrics.active_model.accuracy * 100).toFixed(2)}%
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px', backgroundColor: COLORS.cardAlt, borderRadius: '8px', textAlign: 'center', border: `1px solid ${COLORS.cardBorder}` }}>
+                    <div style={{ color: COLORS.textMuted, fontSize: '11px' }}>PRECISION</div>
+                    <div style={{ fontSize: '22px', fontWeight: 800, color: COLORS.accent2 }}>
+                      {(modelMetrics.active_model.precision * 100).toFixed(2)}%
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px', backgroundColor: COLORS.cardAlt, borderRadius: '8px', textAlign: 'center', border: `1px solid ${COLORS.cardBorder}` }}>
+                    <div style={{ color: COLORS.textMuted, fontSize: '11px' }}>RECALL</div>
+                    <div style={{ fontSize: '22px', fontWeight: 800, color: COLORS.low }}>
+                      {(modelMetrics.active_model.recall * 100).toFixed(2)}%
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px', backgroundColor: COLORS.cardAlt, borderRadius: '8px', textAlign: 'center', border: `1px solid ${COLORS.cardBorder}` }}>
+                    <div style={{ color: COLORS.textMuted, fontSize: '11px' }}>F1-SCORE</div>
+                    <div style={{ fontSize: '22px', fontWeight: 800, color: COLORS.high }}>
+                      {modelMetrics.active_model.f1_score}
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px', backgroundColor: COLORS.cardAlt, borderRadius: '8px', textAlign: 'center', border: `1px solid ${COLORS.cardBorder}` }}>
+                    <div style={{ color: COLORS.textMuted, fontSize: '11px' }}>INFERENCE LATENCY</div>
+                    <div style={{ fontSize: '22px', fontWeight: 800, color: COLORS.text }}>
+                      {modelMetrics.active_model.inference_latency_ms} ms
+                    </div>
+                  </div>
+                </div>
+
+                {/* Model Comparison Table */}
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: COLORS.text }}>
+                  🔬 Algorithmic Comparison (CICIDS2017 Dataset)
+                </h4>
+                <div style={{ overflowX: 'auto', marginBottom: '22px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ background: COLORS.theadGrad, textAlign: 'left' }}>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>MODEL</th>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>ACCURACY</th>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>PRECISION</th>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>RECALL</th>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>F1</th>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>LATENCY</th>
+                        <th style={{ padding: '8px 10px', color: COLORS.textMuted }}>EVALUATION</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modelMetrics.model_comparisons?.map((m, idx) => (
+                        <tr key={idx} style={{ borderTop: `1px solid ${COLORS.cardBorder}` }}>
+                          <td style={{ padding: '8px 10px', fontWeight: 700, color: idx === 0 ? COLORS.accent : COLORS.text }}>{m.model}</td>
+                          <td style={{ padding: '8px 10px' }}>{m.accuracy}</td>
+                          <td style={{ padding: '8px 10px' }}>{m.precision}</td>
+                          <td style={{ padding: '8px 10px' }}>{m.recall}</td>
+                          <td style={{ padding: '8px 10px' }}>{m.f1}</td>
+                          <td style={{ padding: '8px 10px' }}>{m.latency}</td>
+                          <td style={{ padding: '8px 10px', color: idx === 0 ? COLORS.low : COLORS.textMuted }}>{m.verdict}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Confusion Matrix Table */}
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: COLORS.text }}>
+                  🎯 Multi-Class Confusion Matrix (Test Set: N=14,570)
+                </h4>
+                <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'center' }}>
+                    <thead>
+                      <tr style={{ background: COLORS.theadGrad }}>
+                        <th style={{ padding: '8px', color: COLORS.textMuted, textAlign: 'left' }}>ACTUAL \ PREDICTED</th>
+                        {modelMetrics.confusion_matrix.labels.map((lbl) => (
+                          <th key={lbl} style={{ padding: '8px', color: COLORS.textMuted }}>{lbl}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modelMetrics.confusion_matrix.matrix.map((row, rIdx) => (
+                        <tr key={rIdx} style={{ borderTop: `1px solid ${COLORS.cardBorder}` }}>
+                          <td style={{ padding: '8px', fontWeight: 700, textAlign: 'left' }}>
+                            {modelMetrics.confusion_matrix.labels[rIdx]}
+                          </td>
+                          {row.map((val, cIdx) => (
+                            <td key={cIdx} style={{
+                              padding: '8px',
+                              backgroundColor: rIdx === cIdx ? 'rgba(46, 204, 113, 0.15)' : 'transparent',
+                              fontWeight: rIdx === cIdx ? 700 : 400,
+                              color: rIdx === cIdx ? COLORS.low : COLORS.textMuted
+                            }}>
+                              {val}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p style={{ textAlign: 'center', color: COLORS.textMuted }}>Loading benchmark dataset...</p>
+            )}
+
+            <button
+              onClick={() => setShowMetricsModal(false)}
+              className="app-btn"
+              style={{ ...buttonStyle, width: '100%', padding: '10px' }}
+            >
+              Close Benchmark Center
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

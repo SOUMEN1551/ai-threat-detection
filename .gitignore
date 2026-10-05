@@ -3,6 +3,7 @@ backend/venv/
 backend/__pycache__/
 backend/threat_model.pkl
 *.pyc
+*.zip
 
 # Node
 frontend/node_modules/

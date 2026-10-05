@@ -42,3 +42,16 @@ def calculate_risk_score(threat_type: str, confidence: float) -> dict:
         "risk_score": risk_score,
         "risk_level": risk_level
     }
+
+def generate_mitigation_rules(source_ip: str, threat_type: str = "Attack") -> dict:
+    """
+    Automated Incident Response (SOAR):
+    Generates actionable firewall rules across Linux, Windows, and Cisco network environments.
+    """
+    clean_ip = source_ip.strip()
+    return {
+        "iptables": f"sudo iptables -A INPUT -s {clean_ip} -j DROP",
+        "powershell": f'New-NetFirewallRule -DisplayName "AI-Threat-Block-{clean_ip}" -Direction Inbound -RemoteAddress {clean_ip} -Action Block',
+        "cisco_acl": f"access-list 101 deny ip host {clean_ip} any",
+        "description": f"Isolate malicious source IP ({clean_ip}) associated with {threat_type} activity."
+    }

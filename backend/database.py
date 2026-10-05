@@ -1,6 +1,6 @@
 import os
 import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -27,6 +27,10 @@ class Alert(Base):
     risk_score = Column(Integer)
     risk_level = Column(String(50))
     institution = Column(String(255))
+    country = Column(String(50), default="Unknown")
+    city = Column(String(100), default="Unknown")
+    firewall_rule = Column(String(255), default="")
+    explanation = Column(Text, default="")
     status = Column(String(50), default="new")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 class User(Base):
